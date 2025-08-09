@@ -1,17 +1,14 @@
 .PHONY = all clean
 FLAGS = -Wall -Werror
 
-BINARIES = s c
+BINARIES = server client
 
 all: $(BINARIES)
 
-# targ: source.c code.c
-# 	  gcc $(FLAGS) -o $@ $^
-
-s: server.c
+server: server.c
 	  gcc $(FLAGS) -o $@ $^
 
-c: client.c
+client: client.c
 	  gcc $(FLAGS) -o $@ $^
 
 clean:
