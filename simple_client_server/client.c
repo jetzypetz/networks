@@ -54,6 +54,7 @@ int main(int argc, char ** argv) {
             close(socketfd);
             return -1;
         }
+        message_string[receive_status] = '\0';
         printf("received: %s", message_string);
     }
 }

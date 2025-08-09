@@ -6,8 +6,8 @@ Feel free to sniff around!
 
 ## Contents
 
-=> a simple UDP client server program, the rite of passage of every frustrated networks coder.
+- a simple UDP client server program, the rite of passage of every frustrated networks coder.
 
-=> an improved UDP client server program using multi-threading to allow better scaling.
+- an improved UDP client server program using multi-threading to allow better scaling.
 
-=> TIC TAC TOE?
+- TIC TAC TOE?
