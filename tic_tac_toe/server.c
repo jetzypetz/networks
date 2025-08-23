@@ -23,7 +23,7 @@ int is_equal(struct sockaddr_in * addr1, struct sockaddr_in * addr2);
 
 int main(int argc, char ** argv) {
     // setup
-    socklen_t from_len = {0};
+    socklen_t from_len = sizeof(struct sockaddr_in);
     int n = 0;
     int turn = 1; // 1 for player 1, 2 for player 2
     int winner = 0;
@@ -92,7 +92,7 @@ int main(int argc, char ** argv) {
 
         message[receive_status] = '\0';
         printf("received: %s\n", message);
-        printf("sender info:\nport: %d\n", ntohs(client[players + 1].sin_port));
+        printf("sender info:\naddress: %s\nport: %d\nfrom_len: %d\n", inet_ntoa(client[players].sin_addr), ntohs(client[players].sin_port), from_len);
 
         invite_string[25] = players + 48;
         printf("sending: %s\n", invite_string);

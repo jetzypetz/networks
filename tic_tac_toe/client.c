@@ -26,6 +26,10 @@ int main(int argc, char ** argv) {
     int port = 0;
     int interrupt = 0;
     int receive_status = 0;
+
+    char hello_string[8] = "_Hello!";
+    hello_string[0] = TXT;
+
     char message[MESSAGE_SIZE + 1] = {0};
 
     if (argc < 3) {
@@ -48,7 +52,7 @@ int main(int argc, char ** argv) {
     inet_pton(AF_INET, argv[1], &server_address.sin_addr.s_addr);
 
     // connect
-    if (sendto(socketfd, HELLO, strlen(HELLO), 0,
+    if (sendto(socketfd, hello_string, 8, 0,
                 (struct sockaddr *) &server_address, sizeof(server_address)) <= 0) {
         fprintf(stderr, "failed to send\n");
         close(socketfd);
