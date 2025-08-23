@@ -12,21 +12,22 @@
 // shared variables
 int socketfd = 0;
 struct sockaddr_in server = {0};
-struct sockaddr_in incoming = {0};
-struct sockaddr_in client[2] = {0};
+struct sockaddr_in client[3] = {0}; // incoming messages go to 0, 1 for player 1 and 2 for player 2
 
 char message[MESSAGE_SIZE + 1] = {0};
 
 // helper function
-int send_move_request(int turn);
+int check_win(char * grid);
+int as_grid(char * game_state, char * grid);
+int is_equal(struct sockaddr_in * addr1, struct sockaddr_in * addr2);
 
 int main(int argc, char ** argv) {
     // setup
+    socklen_t from_len = {0};
     int n = 0;
     int turn = 1; // 1 for player 1, 2 for player 2
     int winner = 0;
     int players = 0;
-    int got_move = 0;
     int is_player = 0;
 
     int port = 0;
@@ -34,12 +35,16 @@ int main(int argc, char ** argv) {
 
     char game_state[30] = {0};
     game_state[0] = FYI;
+    char grid[10] = {0};
 
     char invite_string[28] = "_Welcome, you are player _!";
     invite_string[0] = TXT;
 
     char end_string[3] = "__";
     end_string[0] = END;
+
+    char move_request_string[2] = "_";
+    move_request_string[0] = MYM;
 
     if (argc < 2) {
         fprintf(stderr, "usage: ./server <PORT>\n");
@@ -70,23 +75,30 @@ int main(int argc, char ** argv) {
     // connect players
     while (players != 2) {
         receive_status = recvfrom(socketfd, message, MESSAGE_SIZE + 1,
-                0, (struct sockaddr *) &client[players], NULL);
+                0, (struct sockaddr *) &client[players + 1], &from_len);
         if (receive_status <= 0) {
             perror("failed to receive");
             close(socketfd);
             return receive_status;
         }
-        message[receive_status] = '\0';
-        
-        if ((message[0] != TXT) || (strlen(message) < 2)) { // ignore weird messages
+
+        if ((message[0] != TXT) || (receive_status < 2)) {
             printf("got strange message\n");
             continue;
         }
 
-        invite_string[25] = ++players;
+        // player approved
+        players++;
+
+        message[receive_status] = '\0';
+        printf("received: %s\n", message);
+        printf("sender info:\nport: %d\n", ntohs(client[players + 1].sin_port));
+
+        invite_string[25] = players + 48;
+        printf("sending: %s\n", invite_string);
             
         if (sendto(socketfd, invite_string, 28,
-                0, (struct sockaddr *) &client[players - 1], sizeof(client[players - 1])) <= 0) {
+                0, (struct sockaddr *) &client[players], sizeof(client[players])) <= 0) {
             perror("failed to send");
             close(socketfd);
             return -1;
@@ -95,50 +107,54 @@ int main(int argc, char ** argv) {
 
     // game loop
     while (!winner) {
-        send_move_request(turn); // TODO
+        if (sendto(socketfd, move_request_string, 2, 0, (struct sockaddr *) &client[turn], sizeof(client[turn])) <= 0) {
+            perror("failed to send");
+            close(socketfd);
+            return -1;
+        }
         
-        // resolve unknown clients, not-your-turn, and incorrect messages
+        // resolve unknown clients and not-your-turn
         while (1) {
             receive_status = recvfrom(socketfd, message, MESSAGE_SIZE + 1,
-                    0, (struct sockaddr *) &incoming, NULL);
+                    0, (struct sockaddr *) &client[0], &from_len);
             if (receive_status <= 0) {
                 perror("failed to receive");
-                        close(socketfd);
+                close(socketfd);
                 return receive_status;
             }
             message[receive_status] = '\0';
 
-            is_player = is_equal(&incoming, &client[0]) + // TODO
-                    2 * is_equal(&incoming, &client[1]);
+            is_player = is_equal(&client[0], &client[1]) +
+                    2 * is_equal(&client[0], &client[2]);
             if (!is_player) {
                 end_string[1] = 255;
                 if (sendto(socketfd, end_string, 3, 0,
-                            (struct sockaddr *) &incoming, sizeof(incoming)) <= 0) {
+                            (struct sockaddr *) &client[0], sizeof(client[0])) <= 0) {
                     perror("failed to send");
                     close(socketfd);
-                    return -1;
-                }
+                    return -1; }
             } else if (is_player == turn) {
                 break;
             }
         }
 
         // move validity
+        n = game_state[1];
+
         if ((message[0] != MOV)
                 || (message[1] < 0)
                 || (message[1] > 2)
                 || (message[2] < 0)
                 || (message[2] > 2)
            ) {
-            printf("invalid move by player %d\n", is_player);
+            printf("invalid move by player %d on move %d\n", is_player, n + 1);
             winner = is_player ^ 3;
         }
 
-        n = game_state[1];
         for (int i=0;i<n;i++) {
             if ((game_state[3 * i + 3] == message[1])
                     || (game_state[3 * i + 4] == message[2])) {
-                printf("invalid move by player %d\n", is_player);
+                printf("invalid move by player %d on move %d\n", is_player, n + 1);
                 winner = is_player ^ 3;
             }
         }
@@ -151,8 +167,69 @@ int main(int argc, char ** argv) {
         turn ^= 3;
 
         // check win
-        
+        if (as_grid(game_state, grid)) {
+            fprintf(stderr, "failed as_grid\n");
+            return -1;
+        }
 
+        if (check_win(grid)) {
+            winner = is_player;
+        }
     }
     return 0;
 }
+
+int as_grid(char * game_state, char * grid) {
+    memset(grid, 0, 9);
+
+    for (int parse=0;parse<3*game_state[1];parse+=3) {
+        grid[3 * game_state[3*parse + 4] + game_state[3*parse + 3]] = game_state[3*parse + 2];
+    }
+    return 0;
+}
+
+int check_win(char * grid) {
+    int row = 0;
+    int col = 0;
+
+    // horizontal wins
+    for (row=0;row<3;row++) {
+        if (grid[3*row] && grid[3*row] == grid[3*row + 1] && grid[3*row] == grid[3*row + 1]) {
+            return grid[3*row];
+        }
+    }
+
+    // vertical wins
+    for (col=0;col<3;col++) {
+        if (grid[col] && grid[col] == grid[col + 3] && grid[col] == grid[col + 6]) {
+            return grid[col];
+        }
+    }
+
+    // diagonal wins
+    if (grid[0] && grid[0] == grid[4] && grid[0] == grid[8]) {
+        return grid[0];
+    }
+    if (grid[2] && grid[2] == grid[4] && grid[2] == grid[6]) {
+        return grid[2];
+    }
+
+    return 0;
+}
+
+int is_equal(struct sockaddr_in * addr1, struct sockaddr_in * addr2) {
+    return (addr1->sin_port == addr2->sin_port) && (addr1->sin_addr.s_addr == addr2->sin_addr.s_addr);
+}
+
+
+
+
+
+
+
+
+
+
+
+
+

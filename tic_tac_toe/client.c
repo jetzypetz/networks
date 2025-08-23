@@ -9,12 +9,14 @@
 #include <netdb.h>
 #include "message.h"
 
+// shared data
 char pos[2] = {0};
 char grid[9] = {0};
 
 int socketfd = 0;
 struct sockaddr_in server_address = {0};
 
+// helper functions
 int display_fyi(char * message, char n);
 int wait_move(char * message);
 int display_end(char * message);
