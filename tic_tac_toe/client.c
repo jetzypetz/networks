@@ -17,7 +17,6 @@ int socketfd = 0;
 struct sockaddr_in server_address = {0};
 
 // helper functions
-int display_fyi(char * message, char n);
 int wait_move(char * message);
 int display_end(char * message);
 
@@ -76,7 +75,8 @@ int main(int argc, char ** argv) {
                 break;
             case FYI:
                 printf("[r] [FYI] (%d bytes)\n", receive_status);
-                interrupt = display_fyi(message + 2, message[1]);
+                interrupt = as_grid(message, grid);
+                interrupt += display_grid(grid);
                 break;
             case MYM:
                 printf("[r] [MYM] (%d bytes)\n", receive_status);
@@ -98,46 +98,6 @@ int main(int argc, char ** argv) {
     }
     close(socketfd);
     return interrupt;
-}
-
-int display_fyi(char * message, char n) {
-    memset(grid, 0, 9);
-    
-    // parse
-    for (int parse = 0; parse < 3*n; parse += 3) {
-        grid[message[parse + 2] * 3 + message[parse + 1]] = message[parse];
-    }
-
-    // display
-    printf("move %d\n", n);
-    for (int i=0;i<3;i++) {
-        for (int j=0;j<3;j++) {
-            switch (grid[i*3 + j]) {
-                case 0x00:
-                    printf(" ");
-                    break;
-                case 0x01:
-                    printf("X");
-                    break;
-                case 0x02:
-                    printf("O");
-                    break;
-                default:
-                    printf("\n\nError\n");
-                    return -1;
-            }
-            if (j != 2) {
-                printf("|");
-            } else {
-                if (i != 2) {
-                    printf("\n-+-+-\n");
-                } else {
-                    printf("\n");
-                }
-            }
-        }
-    }
-    return 0;
 }
 
 int wait_move(char * message) {
@@ -210,7 +170,8 @@ int wait_move(char * message) {
     }
 
     message[0] = MOV;
-    strncpy(message + 1, pos, 2);
+    message[1] = pos[0];
+    message[2] = pos[1];
     message[3] = '\0';
 
     if (sendto(socketfd, message, 4, 0,

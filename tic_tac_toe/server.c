@@ -18,8 +18,8 @@ char message[MESSAGE_SIZE + 1] = {0};
 
 // helper function
 int check_win(char * grid);
-int as_grid(char * game_state, char * grid);
 int is_equal(struct sockaddr_in * addr1, struct sockaddr_in * addr2);
+void display_game_state(char * game_state);
 
 int main(int argc, char ** argv) {
     // setup
@@ -33,9 +33,11 @@ int main(int argc, char ** argv) {
     int port = 0;
     int receive_status = 0;
 
+    char grid[10] = {0};
+
+    // messages
     char game_state[30] = {0};
     game_state[0] = FYI;
-    char grid[10] = {0};
 
     char invite_string[28] = "_Welcome, you are player _!";
     invite_string[0] = TXT;
@@ -81,6 +83,7 @@ int main(int argc, char ** argv) {
             close(socketfd);
             return receive_status;
         }
+        message[receive_status] = '\0';
 
         if ((message[0] != TXT) || (receive_status < 2)) {
             printf("got strange message\n");
@@ -90,12 +93,9 @@ int main(int argc, char ** argv) {
         // player approved
         players++;
 
-        message[receive_status] = '\0';
         printf("received: %s\n", message);
-        printf("sender info:\naddress: %s\nport: %d\nfrom_len: %d\n", inet_ntoa(client[players].sin_addr), ntohs(client[players].sin_port), from_len);
 
         invite_string[25] = players + 48;
-        printf("sending: %s\n", invite_string);
             
         if (sendto(socketfd, invite_string, 28,
                 0, (struct sockaddr *) &client[players], sizeof(client[players])) <= 0) {
@@ -107,6 +107,12 @@ int main(int argc, char ** argv) {
 
     // game loop
     while (!winner) {
+        if (sendto(socketfd, game_state, 30, 0, (struct sockaddr *) &client[turn], sizeof(client[turn])) <= 0) {
+            perror("failed to send");
+            close(socketfd);
+            return -1;
+        }
+
         if (sendto(socketfd, move_request_string, 2, 0, (struct sockaddr *) &client[turn], sizeof(client[turn])) <= 0) {
             perror("failed to send");
             close(socketfd);
@@ -147,24 +153,32 @@ int main(int argc, char ** argv) {
                 || (message[2] < 0)
                 || (message[2] > 2)
            ) {
-            printf("invalid move by player %d on move %d\n", is_player, n + 1);
+            printf("invalid move by player %d on move %d. wrong format\n", is_player, n + 1);
             winner = is_player ^ 3;
         }
 
         for (int i=0;i<n;i++) {
             if ((game_state[3 * i + 3] == message[1])
-                    || (game_state[3 * i + 4] == message[2])) {
-                printf("invalid move by player %d on move %d\n", is_player, n + 1);
+                    && (game_state[3 * i + 4] == message[2])) {
+                printf("invalid move by player %d on move %d. space already taken\n", is_player, n + 1);
                 winner = is_player ^ 3;
             }
         }
 
-        // add move
+        // move approved
         game_state[3 * n + 2] = is_player;
         game_state[3 * n + 3] = message[1];
         game_state[3 * n + 4] = message[2];
         game_state[1] = n + 1;
         turn ^= 3;
+        as_grid(game_state, grid);
+        display_game_state(game_state);
+        printf("grid byte for byte:\n");
+        for (int i=0;i<9;i++) {
+            printf("%c|", grid[i] + 48);
+        }
+        printf("\n");
+        display_grid(grid);
 
         // check win
         if (as_grid(game_state, grid)) {
@@ -176,16 +190,16 @@ int main(int argc, char ** argv) {
             winner = is_player;
         }
     }
+    printf("found winner!\n");
     return 0;
 }
 
-int as_grid(char * game_state, char * grid) {
-    memset(grid, 0, 9);
-
-    for (int parse=0;parse<3*game_state[1];parse+=3) {
-        grid[3 * game_state[3*parse + 4] + game_state[3*parse + 3]] = game_state[3*parse + 2];
+void display_game_state(char * game_state) {
+    printf("game_state: |");
+    for (int i=0;i<30;i++) {
+        printf("%c|", game_state[i] + 48);
     }
-    return 0;
+    printf("\n");
 }
 
 int check_win(char * grid) {
@@ -194,7 +208,7 @@ int check_win(char * grid) {
 
     // horizontal wins
     for (row=0;row<3;row++) {
-        if (grid[3*row] && grid[3*row] == grid[3*row + 1] && grid[3*row] == grid[3*row + 1]) {
+        if (grid[3*row] && grid[3*row] == grid[3*row + 1] && grid[3*row] == grid[3*row + 2]) {
             return grid[3*row];
         }
     }
