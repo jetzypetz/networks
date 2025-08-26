@@ -19,8 +19,7 @@ int main_interrupt = 0;
 struct sockaddr_in client_address = {0};
 struct sockaddr_in server_address = {0};
 
-
-void * receive_function();
+void * receive_function(void * arg);
 
 int close_shop(int return_value, pthread_t * thread);
 
@@ -94,7 +93,8 @@ int main(int argc, char ** argv) {
     return close_shop(-1, &receive_thread);
 }
 
-void * receive_function() {
+void * receive_function(void * arg) {
+    (void)arg;
     int receive_status;
     char message_in[MESSAGE_SIZE + 1] = {0};
 

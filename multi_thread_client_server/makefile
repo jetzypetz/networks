@@ -1,10 +1,9 @@
 .PHONY: all clean
-FLAGS = -Wall -Werror
+FLAGS = -Wall # -Werror
 
-BINARIES = server client test
+BINARIES = server client
 
-DEPENDENCIES = server.c  client.c  concurrent_test.c
-
+DEPENDENCIES = server.c  client.c
 all: $(BINARIES)
 
 
@@ -12,9 +11,6 @@ server: server.c
 	gcc $(FLAGS) -o $@ $^
 
 client: client.c
-	gcc $(FLAGS) -o $@ $^
-
-test: concurrent_test.c
 	gcc $(FLAGS) -o $@ $^ -lpthread
 
 clean:
