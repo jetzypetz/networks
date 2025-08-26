@@ -45,7 +45,7 @@ int main(int argc, char ** argv) {
         // receive
         socklen_t len = sizeof(struct sockaddr);
         receive_status = recvfrom(socketfd, message_string, MESSAGE_SIZE + 1,
-                MSG_WAITALL, (struct sockaddr *) &client_address, &len);
+                0 , (struct sockaddr *) &client_address, &len);
         if (receive_status <= 0) {
             fprintf(stderr, "failed to receive\n");
             close(socketfd);
