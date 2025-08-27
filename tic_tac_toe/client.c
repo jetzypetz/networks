@@ -52,7 +52,7 @@ int main(int argc, char ** argv) {
 
     // connect
     if (sendto(socketfd, hello_string, 8, 0,
-                (struct sockaddr *) &server_address, sizeof(server_address)) <= 0) {
+                (struct sockaddr *) &server_address, sizeof(server_address)) == -1) {
         fprintf(stderr, "failed to send\n");
         close(socketfd);
         return -1;
@@ -61,7 +61,7 @@ int main(int argc, char ** argv) {
     // listen loop
     while (!interrupt) {
         receive_status = recvfrom(socketfd, message, MESSAGE_SIZE + 1, 0, NULL, NULL);
-        if (receive_status <= 0) {
+        if (receive_status == -1) {
             fprintf(stderr, "failed to receive\n");
             close(socketfd);
             return -1;
@@ -175,7 +175,7 @@ int wait_move(char * message) {
     message[3] = '\0';
 
     if (sendto(socketfd, message, 4, 0,
-                (struct sockaddr *) &server_address, sizeof(server_address)) <= 0) {
+                (struct sockaddr *) &server_address, sizeof(server_address)) == -1) {
         perror("failed to send");
         return -1;
     }
