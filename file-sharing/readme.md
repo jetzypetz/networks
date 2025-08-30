@@ -12,9 +12,11 @@ the program can be built simply with ```make```
 
 ### server
 
-```server <port>```
+```server <port> [src]```
 
 * port: port for receiving tcp/http requests
+
+* src: *optional* choose source directory (default is ./files/)
 
 ### client
 

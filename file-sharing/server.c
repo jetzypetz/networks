@@ -17,6 +17,11 @@ typedef struct {
     pthread_t thread;
 } client_data_t;
     
+char src[60] = {0};
+int src_size = 0;
+
+int parse_message(char * http_request, char * filename,
+        int filename_size, struct sockaddr_in * udp_address, long int * start_byte, long int * nbytes);
 void * client_handler(void * client);
 int cleanup(int sock1, int sock2, void * client);
 
@@ -35,7 +40,7 @@ int main(int argc, char ** argv) {
     // args
 
     if (argc < 2) {
-        fprintf(stderr, "usage: ./server <PORT>\n");
+        fprintf(stderr, "usage: %s <port> [src]\n", argv[0]);
         return -1;
     }
 
@@ -44,6 +49,19 @@ int main(int argc, char ** argv) {
         fprintf(stderr, "invalid server port (%d)\n", http_port);
         return -1;
     }
+
+    if (argc > 2) {
+        src_size = strlen(argv[2]);
+        strcpy(src, argv[2]);
+        if (src[src_size - 1] != '/') {
+            src[src_size] = '/';
+            src_size++;
+        }
+    } else {
+        strcpy(src, "files/");
+        src_size = 6;
+    }
+
 
     // tcp/http setup
 
@@ -93,25 +111,25 @@ int main(int argc, char ** argv) {
 void * client_handler(void * client_data) {
     client_data_t * client = (client_data_t *) client_data;
     int udp_sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-    int udp_port = 0;
     struct sockaddr_in udp_address = {0};
 
     char http_request[SIZE_HTTP_REQUEST] = {0};
     char http_response[SIZE_HTTP_RESPONSE] = {0};
     char http_error[SIZE_HTTP_RESPONSE] = {0};
-    char * filename = NULL;
-    char * ip_address_string = NULL;
-    char * udp_port_string = NULL;
-    char * start_byte_string = NULL;
-    char * nbytes_string = NULL;
+
+    char * filename = malloc(MAX_FILENAME_SIZE);
+    strncpy(filename, src, src_size);
+
 
     long file_size = 0;
     long parsed = 0;
 
+    long start_byte = 0;
     long chunk_size = 0;
     uint8_t sendbuff[SIZE_SENDBUFF] = {0};
 
     // receive http message
+    int http_status = 0;
     int http_recvlen = recv(client->sockfd, http_request, SIZE_HTTP_REQUEST, 0);
     if (http_recvlen == -1) {
         perror("failed to receive");
@@ -120,7 +138,10 @@ void * client_handler(void * client_data) {
     }
 
     // parse message
-    if (strncmp(http_request, "GET /sendfile/", 14)) {
+    http_status = parse_message(http_request, filename, MAX_FILENAME_SIZE - src_size,
+            &udp_address, &start_byte, &chunk_size);
+
+    if (http_status < 0) {
         fprintf(stderr, "bad http request\n");
         fprintf(stderr, "message:\n%s\n", http_request);
         fprintf(stderr, "sending error response\n");
@@ -128,52 +149,13 @@ void * client_handler(void * client_data) {
         snprintf(http_error, SIZE_HTTP_RESPONSE, "HTTP/1.1 400 ERROR\r\n"
                 "Content-Type: text/plain\r\n"
                 "Content-Length: 40\r\n\r\n"
-                "ERROR badly formatted request (problem: http command)\r\n");
-        write(client->sockfd, http_error, strlen(http_error));
-
-        cleanup(udp_sockfd, client->sockfd, client);
-        pthread_exit(NULL);
-    }
-    filename = http_request + 8;
-    memcpy(http_request + 8, "files/", 6);
-
-    if ((ip_address_string = strstr(filename + 6, "/")) == NULL) {
-        fprintf(stderr, "bad http request (ip)\n");
-        fprintf(stderr, "message:\n%s", http_request);
-
-        snprintf(http_error, SIZE_HTTP_RESPONSE, "HTTP/1.1 400 ERROR\r\n"
-                "Content-Type: text/plain\r\n"
-                "Content-Length: 40\r\n\r\n"
-                "ERROR badly formatted request (problem: ip address)\r\n");
+                "ERROR badly formatted request\r\n");
         write(client->sockfd, http_error, strlen(http_error));
 
         cleanup(udp_sockfd, client->sockfd, client);
         pthread_exit(NULL);
     }
     
-    *ip_address_string = '\0';
-    ip_address_string += 1;
-    
-    if ((udp_port_string = strstr(ip_address_string, "/")) == NULL) {
-        fprintf(stderr, "bad http request (port)\n");
-        fprintf(stderr, "message:\n%s", http_request);
-
-        snprintf(http_error, SIZE_HTTP_RESPONSE, "HTTP/1.1 400 ERROR\r\n"
-                "Content-Type: text/plain\r\n"
-                "Content-Length: 40\r\n\r\n"
-                "ERROR badly formatted request (problem: port)\r\n");
-        write(client->sockfd, http_error, strlen(http_error));
-
-        cleanup(udp_sockfd, client->sockfd, client);
-        pthread_exit(NULL);
-    }
-    *udp_port_string = '\0';
-    udp_port_string += 1;
-    
-    udp_port = ascii_to_int(udp_port_string, 5);
-
-    printf("opening file: %s\n", filename);
-
     FILE * file = fopen(filename, "r");
     if (!file) {
         perror("failed to open file");
@@ -191,7 +173,20 @@ void * client_handler(void * client_data) {
     fseek(file, 0, SEEK_END);
     file_size = ftell(file);
     fseek(file, 0, SEEK_SET);
-    printf("file size: %ld\n", file_size);
+
+    if (file_size >= SIZE_FILEBUFF) {
+        perror("file too big");
+
+        snprintf(http_error, SIZE_HTTP_RESPONSE, "HTTP/1.1 400 ERROR\r\n"
+                "Content-Type: text/plain\r\n"
+                "Content-Length: 30\r\n\r\n"
+                "ERROR File too big\r\n");
+        write(client->sockfd, http_error, strlen(http_error));
+
+        fclose(file);
+        cleanup(udp_sockfd, client->sockfd, client);
+        pthread_exit(NULL);
+    }
 
     snprintf(http_response, SIZE_HTTP_RESPONSE, "HTTP/1.1 200 OK\r\n"
             "Content-Type: text/plain\r\n"
@@ -202,146 +197,17 @@ void * client_handler(void * client_data) {
 
     uint8_t filebuff[file_size];
     fread(filebuff, 1, file_size, file);
-
-    udp_address.sin_family = AF_INET;
-    udp_address.sin_port = htons(udp_port);
-    udp_address.sin_addr.s_addr = client->address.sin_addr.s_addr;
         
-    // send file
 
-    while (parsed < file_size) {
-        if (parsed + SIZE_CHUNK > file_size) {
-            chunk_size = file_size - parsed;
-        } else {
-            chunk_size = SIZE_CHUNK;
-        }
+    if (http_status == 1) {
 
-        ((uint16_t *) sendbuff)[0] = htons((uint16_t) parsed);
-        ((uint16_t *) sendbuff)[1] = htons((uint16_t) chunk_size);
-        memcpy(sendbuff + 4, filebuff + parsed, chunk_size);
+        // send whole file
 
-        if (sendto(udp_sockfd, sendbuff, chunk_size + 4, 0,
-                    (struct sockaddr *) &udp_address, sizeof(udp_address)) == -1) {
-            perror("failed to send udp package");
-
-            snprintf(http_error, SIZE_HTTP_RESPONSE, "HTTP/1.1 400 ERROR\r\n"
-                    "Content-Type: text/plain\r\n"
-                    "Content-Length: 40\r\n\r\n"
-                    "ERROR failed to send package\r\n");
-            write(client->sockfd, http_error, strlen(http_error));
-
-            fclose(file);
-            cleanup(udp_sockfd, client->sockfd, client);
-            pthread_exit(NULL);
-        }
-
-        parsed += chunk_size;
-    }
-
-
-    // listen to retransmission requests for 5 seconds
-
-    set_nonblock(client->sockfd);
-
-    time_t waiting = time(NULL);
-    while (difftime(time(NULL), waiting) <= 5.0) {
-        http_recvlen = recv(client->sockfd, http_request, SIZE_HTTP_REQUEST, 0);
-
-        if (http_recvlen > 0) {
-            // parse message
-            if (strncmp(http_request, "GET /retransmit/", 16)) {
-                fprintf(stderr, "bad http request\n");
-                fprintf(stderr, "message:\n%s", http_request);
-
-                snprintf(http_error, SIZE_HTTP_RESPONSE, "HTTP/1.1 400 ERROR\r\n"
-                        "Content-Type: text/plain\r\n"
-                        "Content-Length: 40\r\n\r\n"
-                        "ERROR badly formatted request (problem: http command)\r\n");
-                write(client->sockfd, http_error, strlen(http_error));
-
-                fclose(file);
-                cleanup(udp_sockfd, client->sockfd, client);
-                pthread_exit(NULL);
-            }
-            filename = http_request + 16;
-
-            if ((ip_address_string = strstr(filename, "/")) == NULL) {
-                fprintf(stderr, "bad http request (ip)\n");
-                fprintf(stderr, "message:\n%s", http_request);
-
-                snprintf(http_error, SIZE_HTTP_RESPONSE, "HTTP/1.1 400 ERROR\r\n"
-                        "Content-Type: text/plain\r\n"
-                        "Content-Length: 40\r\n\r\n"
-                        "ERROR badly formatted request (problem: ip)\r\n");
-                write(client->sockfd, http_error, strlen(http_error));
-
-                fclose(file);
-                cleanup(udp_sockfd, client->sockfd, client);
-                pthread_exit(NULL);
-            }
-            
-            *ip_address_string = '\0';
-            ip_address_string += 1;
-            
-            if ((udp_port_string = strstr(ip_address_string, "/")) == NULL) {
-                fprintf(stderr, "bad http request (port)\n");
-                fprintf(stderr, "message:\n%s", http_request);
-
-                snprintf(http_error, SIZE_HTTP_RESPONSE, "HTTP/1.1 400 ERROR\r\n"
-                        "Content-Type: text/plain\r\n"
-                        "Content-Length: 40\r\n\r\n"
-                        "ERROR badly formatted request (problem: port)\r\n");
-                write(client->sockfd, http_error, strlen(http_error));
-
-                fclose(file);
-                cleanup(udp_sockfd, client->sockfd, client);
-                pthread_exit(NULL);
-            }
-            *udp_port_string = '\0';
-            udp_port_string += 1;
-            
-            if ((start_byte_string = strstr(udp_port_string, "/")) == NULL) {
-                fprintf(stderr, "bad http request (start byte)\n");
-                fprintf(stderr, "message:\n%s", http_request);
-
-                snprintf(http_error, SIZE_HTTP_RESPONSE, "HTTP/1.1 400 ERROR\r\n"
-                        "Content-Type: text/plain\r\n"
-                        "Content-Length: 40\r\n\r\n"
-                        "ERROR badly formatted request (problem: start byte)\r\n");
-                write(client->sockfd, http_error, strlen(http_error));
-
-                fclose(file);
-                cleanup(udp_sockfd, client->sockfd, client);
-                pthread_exit(NULL);
-            }
-            *start_byte_string = '\0';
-            start_byte_string  += 1;
-
-            if ((nbytes_string = strstr(start_byte_string, "/")) == NULL) {
-                fprintf(stderr, "bad http request (byte size)\n");
-                fprintf(stderr, "message:\n%s", http_request);
-                fclose(file);
-                cleanup(udp_sockfd, client->sockfd, client);
-                pthread_exit(NULL);
-            }
-            *nbytes_string = '\0';
-            nbytes_string  += 1;
-
-            parsed = ascii_to_int(start_byte_string, strlen(start_byte_string));
-            chunk_size = ascii_to_int(nbytes_string, strlen(nbytes_string));
-            
-            if (parsed + chunk_size > file_size) {
-                fprintf(stderr, "bytes requested cross bounds of file\n");
-
-                snprintf(http_error, SIZE_HTTP_RESPONSE, "HTTP/1.1 400 ERROR\r\n"
-                        "Content-Type: text/plain\r\n"
-                        "Content-Length: 40\r\n\r\n"
-                        "ERROR bytes requested are out of bounds\r\n");
-                write(client->sockfd, http_error, strlen(http_error));
-
-                fclose(file);
-                cleanup(udp_sockfd, client->sockfd, client);
-                pthread_exit(NULL);
+        while (parsed < file_size) {
+            if (parsed + SIZE_CHUNK > file_size) {
+                chunk_size = file_size - parsed;
+            } else {
+                chunk_size = SIZE_CHUNK;
             }
 
             ((uint16_t *) sendbuff)[0] = htons((uint16_t) parsed);
@@ -362,11 +228,103 @@ void * client_handler(void * client_data) {
                 cleanup(udp_sockfd, client->sockfd, client);
                 pthread_exit(NULL);
             }
+
+            parsed += chunk_size;
+        }
+        close(client->sockfd);
+
+    } else if (http_status == 2) {
+
+        // send requested packet
+
+        if (start_byte + chunk_size > file_size) {
+            fprintf(stderr, "bytes requested cross bounds of file\n");
+
+            snprintf(http_error, SIZE_HTTP_RESPONSE, "HTTP/1.1 400 ERROR\r\n"
+                    "Content-Type: text/plain\r\n"
+                    "Content-Length: 40\r\n\r\n"
+                    "ERROR bytes requested are out of bounds\r\n");
+            write(client->sockfd, http_error, strlen(http_error));
+
+            fclose(file);
+            cleanup(udp_sockfd, client->sockfd, client);
+            pthread_exit(NULL);
+        }
+
+        ((uint16_t *) sendbuff)[0] = htons((uint16_t) start_byte);
+        ((uint16_t *) sendbuff)[1] = htons((uint16_t) chunk_size);
+        memcpy(sendbuff + 4, filebuff + start_byte, chunk_size);
+
+        if (sendto(udp_sockfd, sendbuff, chunk_size + 4, 0,
+                    (struct sockaddr *) &udp_address, sizeof(udp_address)) == -1) {
+            perror("failed to send udp package");
+
+            snprintf(http_error, SIZE_HTTP_RESPONSE, "HTTP/1.1 400 ERROR\r\n"
+                    "Content-Type: text/plain\r\n"
+                    "Content-Length: 40\r\n\r\n"
+                    "ERROR failed to send package\r\n");
+            write(client->sockfd, http_error, strlen(http_error));
+
+            fclose(file);
+            cleanup(udp_sockfd, client->sockfd, client);
+            pthread_exit(NULL);
         }
     }
+
     fclose(file);
     cleanup(udp_sockfd, client->sockfd, client);
     pthread_exit(NULL);
+}
+
+int parse_message(char * http_request, char * filename,
+        int filename_size, struct sockaddr_in * udp_address, long int * start_byte, long int * nbytes) {
+
+    char name[MAX_FILENAME_SIZE] = {0};
+    char ip[15] = {0};
+    int port;
+
+    if (sscanf(http_request, "GET /sendfile/%256[^/]/%15[^/]/%d HTTP/1.1", name, ip, &port) == 3) {
+
+        if (strlen(filename) >= MAX_FILENAME_SIZE - src_size) {
+            return -1;
+        }
+        strcat(filename, name);
+
+        if (inet_pton(AF_INET, ip, &udp_address->sin_addr) != 1) {
+            return -3;
+        }
+
+        if (port <=0 || port > 65535) {
+            return -4;
+        }
+        udp_address->sin_port = htons(port);
+
+        return 1;
+
+    } else if (sscanf(http_request, "GET /retransmit/%256[^/]/%15[^/]/%d/%ld/%ld HTTP/1.1",
+                name, ip, &port, start_byte, nbytes) == 5) {
+
+        if (strlen(filename) >=MAX_FILENAME_SIZE - src_size) {
+            return -1;
+        }
+
+        strcat(filename, name);
+
+        if (inet_pton(AF_INET, ip, &udp_address->sin_addr) != 1) {
+            return -3;
+        }
+
+        if (port <=0 || port > 65535) {
+            return -4;
+        }
+        udp_address->sin_port = htons(port);
+
+        return 2;
+
+    }
+
+    return -1;
+
 }
 
 int cleanup(int sock1, int sock2, void * client) {

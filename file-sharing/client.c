@@ -21,13 +21,14 @@ int add_data(int * data_info, int data_npairs, int start, int nbytes);
 int cleanup(int udp_sockfd, int http_sockfd);
 
 int main(int argc, char ** argv) {
+
     // udp
 
     int udp_port = 0;
     int udp_sockfd = 0;
     int udp_recvlen = 0;
 
-    struct sockaddr_in udp_address = {0}; // personal receiving address
+    struct sockaddr_in udp_address = {0};
     in_addr_t my_ip_address = {0};
     char my_ip_address_string[20] = {0};
 
@@ -51,7 +52,7 @@ int main(int argc, char ** argv) {
     int http_sockfd = 0;
     int http_recvlen = 0;
 
-    struct sockaddr_in http_server_address = {0}; // server forwarding address
+    struct sockaddr_in http_server_address = {0};
     in_addr_t http_server_ip_address = {0};
 
     char http_file_request[SIZE_HTTP_REQUEST] = {0};
@@ -183,18 +184,27 @@ int main(int argc, char ** argv) {
 
     while (missing_data(data_info, data_npairs, file_size, &missing_data_start, &missing_data_nbytes)) {
         while ((udp_recvlen = recv(udp_sockfd, recvbuff, SIZE_RECVBUFF, 0)) <= 0) { // socket not blocking
-            if (errno != EAGAIN && errno != EWOULDBLOCK) {
-                fprintf(stderr, "file receive failed\n");
-                return cleanup(udp_sockfd, http_sockfd);
-            }
 
-            if (difftime(time(NULL), locked) >= 4) {
+            if (difftime(time(NULL), locked) >= LOCK_TIMEOUT) {
+
                 fprintf(stderr, "sending retransmission request...\n");
                 if (consecutive_failed_requests++ == 5) {
                     fprintf(stderr, "sent 5 consecutive requests with no reply\n");
                     return cleanup(udp_sockfd, http_sockfd);
                 }
+
+                close(http_sockfd);
+
+                if ((http_sockfd = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
+                    perror("failed to rebuild socket");
+                    return cleanup(udp_sockfd, http_sockfd);
+                }
                 
+                if (connect(http_sockfd, (struct sockaddr *) &http_server_address, sizeof(http_server_address)) == -1) {
+                    perror("failed to reconnect socket");
+                    return cleanup(udp_sockfd, http_sockfd);
+                }
+
                 snprintf(http_retransmit_request, SIZE_HTTP_REQUEST,
                         "GET /retransmit/%s/%s/%d/%d/%d HTTP/1.1\r\n\r\n", // \r\nHost: %s:%d
                         argv[3], my_ip_address_string, udp_port, missing_data_start, missing_data_nbytes); // , argv[1], http_port
@@ -321,7 +331,7 @@ int missing_data(int * data_info, int data_npairs, int file_size, int * missing_
 
     if (data_info[1] != file_size) {
         *missing_data_start = data_info[1];
-        *missing_data_nbytes = (data_npairs > 1) ? data_info[2] : file_size;
+        *missing_data_nbytes = (data_npairs > 1) ? data_info[2] - data_info[1] : file_size;
         return 1;
     }
 
